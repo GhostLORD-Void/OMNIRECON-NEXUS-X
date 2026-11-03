@@ -40,3 +40,11 @@ def test_provider_order_filters_unconfigured(monkeypatch):
     monkeypatch.setattr(providers.settings, "openai_model", "")
     monkeypatch.setattr(providers.settings, "anthropic_api_key", "")
     assert HybridModelRouter().configured() == [("local", "llama3")]
+
+@pytest.mark.asyncio
+async def test_local_endpoint_hostname_is_not_prefix_matched(monkeypatch):
+    from omnirecon import providers
+    monkeypatch.setattr(providers.settings, "openai_base_url", "http://localhost.attacker.invalid/v1")
+    monkeypatch.setattr(providers.settings, "openai_api_key", "test")
+    with pytest.raises(ValueError):
+        await HybridModelRouter()._request("openai", "test-model", "hello")
