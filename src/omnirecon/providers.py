@@ -100,7 +100,7 @@ class HybridModelRouter:
             if name == "google":
                 response = await client.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                    params={"key": settings.google_api_key},
+                    headers={"x-goog-api-key": settings.google_api_key},
                     json={"contents": [{"parts": [{"text": prompt}]}],
                           "generationConfig": {"temperature": 0.2, "maxOutputTokens": 1800}},
                 )
