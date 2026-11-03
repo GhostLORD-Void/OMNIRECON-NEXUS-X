@@ -5,6 +5,7 @@ returned by the API. The local provider uses an OpenAI-compatible endpoint.
 """
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -64,8 +65,12 @@ class HybridModelRouter:
             if name in ("openai", "local"):
                 base = settings.openai_base_url if name == "openai" else settings.local_model_base_url
                 key = settings.openai_api_key if name == "openai" else settings.local_model_api_key
-                if not base.startswith(("https://", "http://localhost", "http://127.0.0.1")):
-                    raise ValueError("Provider endpoint must use HTTPS, except localhost")
+                parsed = urlparse(base)
+                local_hosts = {"localhost", "127.0.0.1", "::1"}
+                if parsed.scheme != "https" and not (
+                    parsed.scheme == "http" and parsed.hostname in local_hosts
+                ):
+                    raise ValueError("Provider endpoint must use HTTPS, except exact localhost hosts")
                 response = await client.post(
                     base.rstrip("/") + "/chat/completions",
                     headers={"Authorization": f"Bearer {key}"},
