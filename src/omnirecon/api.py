@@ -7,18 +7,16 @@ from pydantic import BaseModel, Field
 
 from omnirecon import __version__
 from omnirecon.agents import list_agents
+from omnirecon.agent_runtime import AgentRunRequest, AgentRunResponse, run_agent_team
 from omnirecon.config import settings
 from omnirecon.dashboard import DASHBOARD_HTML
 from omnirecon.orchestrator import plan_task
-from omnirecon.providers import OpenAICompatibleProvider, ProviderNotConfigured
+from omnirecon.providers import HybridModelRouter, ProviderNotConfigured
 from omnirecon.schemas import HealthResponse, TaskPlanRequest, TaskPlanResponse
 from omnirecon.storage import TaskStore
 
-app = FastAPI(
-    title=settings.app_name,
-    version=__version__,
-    description="A modular multi-agent platform with explicit authorization boundaries.",
-)
+app = FastAPI(title=settings.app_name, version=__version__,
+              description="A modular multi-agent platform with explicit authorization boundaries.")
 store = TaskStore(settings.database_path)
 
 
@@ -27,6 +25,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    provider: str
     model: str
     response: str
 
@@ -44,6 +43,25 @@ def dashboard() -> str:
 @app.get(f"{settings.api_prefix}/agents", tags=["agents"])
 def agents():
     return {"agents": list_agents()}
+
+
+@app.get(f"{settings.api_prefix}/providers", tags=["AI"])
+def providers():
+    router = HybridModelRouter()
+    configured = router.configured()
+    return {"strategy": "ordered-fallback", "configured": [
+        {"provider": name, "model": model} for name, model in configured
+    ], "secrets_exposed": False}
+
+
+@app.post(f"{settings.api_prefix}/agents/run", response_model=AgentRunResponse, tags=["agents"])
+async def run_agents(request: AgentRunRequest) -> AgentRunResponse:
+    try:
+        return await run_agent_team(request)
+    except ProviderNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Agent execution failed; check provider configuration and logs") from exc
 
 
 @app.post(f"{settings.api_prefix}/tasks/plan", response_model=TaskPlanResponse, tags=["tasks"])
@@ -69,16 +87,9 @@ def get_task(task_id: UUID) -> TaskPlanResponse:
 @app.post(f"{settings.api_prefix}/chat", response_model=ChatResponse, tags=["AI"])
 async def chat(request: ChatRequest) -> ChatResponse:
     try:
-        provider = OpenAICompatibleProvider(
-            base_url=settings.model_base_url,
-            api_key=settings.model_api_key,
-            model=settings.model_name,
-            timeout=settings.model_timeout_seconds,
-        )
-    except (ProviderNotConfigured, ValueError) as exc:
+        result = await HybridModelRouter().complete(request.prompt)
+    except ProviderNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    try:
-        answer = await provider.complete(request.prompt)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail="Configured model provider request failed") from exc
-    return ChatResponse(model=settings.model_name, response=answer)
+        raise HTTPException(status_code=502, detail="All configured model providers failed") from exc
+    return ChatResponse(provider=result.provider, model=result.model, response=result.text)
